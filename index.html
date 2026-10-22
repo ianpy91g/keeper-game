@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="守門員大作戰">
+<meta name="theme-color" content="#000000">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>守門員大作戰</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+  canvas { position: absolute; left: 50%; top: 50%; touch-action: none; display: block; }
+  #rotate { position: fixed; top: 0; left: 0; right: 0; bottom: 0; display: none; align-items: center; justify-content: center; text-align: center;
+    color: #f0eef5; font: bold 22px "PingFang TC", "Heiti TC", sans-serif; background: rgba(0,0,0,.85); padding: 20px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="rotate">請把平板橫放<br><span style="font-size:16px;opacity:.7">（直放也能玩，只是畫面比較小）</span></div>
+<script>
+// Bluefy 等 App 內建瀏覽器會把檔案暫存很久，重新整理也拿不到新版。
+// 這個外殼幾乎不會再改；每次開啟都在網址後加時間，強迫重新下載遊戲程式。
+(function () {
+  var t = Date.now(), files = ['keeper.js', 'app.js'];
+  function load(i) {
+    if (i >= files.length) return;
+    var s = document.createElement('script');
+    s.src = files[i] + '?t=' + t;
+    s.onload = function () { load(i + 1); };
+    s.onerror = function () { document.body.insertAdjacentHTML('beforeend',
+      '<p style="color:#fff;font:18px sans-serif;padding:20px">載入失敗，請確認網路後重新整理</p>'); };
+    document.body.appendChild(s);
+  }
+  load(0);
+})();
+</script>
+</body>
+</html>
