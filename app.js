@@ -142,6 +142,7 @@
       r.retryTimer = setTimeout(function () { reconnect(r); }, 1500);
     });
   }
+  var showAll = false;   // 下次選擇清單是否列出全部裝置
   // 連接左手／右手：必須在使用者觸碰的事件裡呼叫（requestDevice 需要使用者手勢）
   function connectRing(side) {
     var r = rings[side], other = rings[side === 'L' ? 'R' : 'L'];
@@ -150,11 +151,14 @@
     var id = ++r.attempt;
     r.busy = false; r.connected = false;
     cancelPending(r);
-    // 直接列出附近所有藍牙裝置（只列 FUNFITGRIP 時，iPad 有時清單是空的）
+    // 平常只列握力環（名稱 FUNFIT… 或有 FFF0 服務）；上次沒選到時改列全部裝置，以防清單是空的
+    var opts = showAll ? { acceptAllDevices: true, optionalServices: [SERVICE] }
+      : { filters: [{ namePrefix: 'FUNFIT' }, { services: [SERVICE] }], optionalServices: [SERVICE] };
     r.status = '請在清單選擇要當' + (side === 'L' ? '左手' : '右手') + '的 FUNFITGRIP';
-    navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [SERVICE] })
+    navigator.bluetooth.requestDevice(opts)
       .then(function (dev) {
         if (id !== r.attempt) return;
+        showAll = false;
         if (other.device && other.device.id === dev.id) {   // 選到另一隻手已經在用的那支
           r.status = '這支已經是' + (side === 'L' ? '右手' : '左手') + '了，請選另一支';
           return;
@@ -166,7 +170,8 @@
         if (id !== r.attempt) return;
         r.busy = false;
         if (e && e.name === 'NotFoundError') {
-          r.status = '沒有選到：手機上的健身趣 App 要先關掉（連著時握力環不會出現），握力環關機再開後再按一次';
+          if (!showAll) { showAll = true; r.status = '沒有選到：清單是空的話，再按一次會列出全部藍牙裝置'; }
+          else r.status = '沒有選到：手機上的健身趣 App 要先關掉（連著時握力環不會出現），握力環關機再開後再按一次';
         } else {
           r.status = '連線失敗：' + errText(e);
         }
