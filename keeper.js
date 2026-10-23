@@ -8,7 +8,7 @@
 (function (root) {
   'use strict';
 
-  var VERSION = '2026.10.23-3';   // 每次發佈都改，畫面右下角會顯示
+  var VERSION = '2026.10.23-4';   // 每次發佈都改，畫面右下角會顯示
   var W = 960, H = 720, H_MIN = 540, H_MAX = 760;
   var FONT = '"PingFang TC", "Heiti TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif';
   var TEXT = [240, 238, 245], DIM = [160, 165, 180], GOLD = [255, 205, 70], GREEN = [96, 220, 150], RED = [255, 90, 90], CYAN = [110, 220, 255];
@@ -705,7 +705,10 @@
       roundRect(ctx, s[2], y, 280, 150, 16); ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fill();
       this.text(ctx, s[1] + '握力環', 24, TEXT, s[2] + 140, y + 30);
       ellipse(ctx, s[2] + 26, y + 30, 8, 8, rgb(r.connected ? (this.flash[s[0]] > 0 ? GOLD : GREEN) : DIM));
-      this.wrapText(ctx, r.connected ? '已連線（握一下試試看）' : (r.status || '尚未連線'), 13, r.connected ? GREEN : [230, 200, 140], s[2] + 140, y + 60, 256);
+      // 已連線時顯示診斷：送出幾次查詢、收到幾筆資料、最後一筆內容、寫入錯誤
+      var diag = r.connected ? ('送出 ' + (r.writes || 0) + '　收到 ' + (r.rx || 0) + (r.lastHex ? '（最後 ' + r.lastHex + '）' : '') + (r.writeErr ? '　' + r.writeErr : '')) : '';
+      this.wrapText(ctx, r.connected ? '已連線（握一下試試看）' : (r.status || '尚未連線'), 13, r.connected ? GREEN : [230, 200, 140], s[2] + 140, y + 52, 256);
+      if (diag) this.wrapText(ctx, diag, 11, DIM, s[2] + 140, y + 74, 256);
       (function (side) {
         self.button(ctx, r.connected ? '重新連接' : '連接' + (side === 'L' ? '左手' : '右手'), s[2] + 40, y + 88, 200, 46, function () { env.connectRing(side); });
       })(s[0]);

@@ -29,7 +29,8 @@
   // ---------- 兩支握力環 ----------
   function newRing(side) {
     return { side: side, device: null, connected: false, busy: false, status: bt ? '尚未連線' : '瀏覽器不支援藍牙',
-             attempt: 0, retryTimer: null, pollTimer: null, writeChar: null, pressed: false, lastCount: null, writing: false };
+             attempt: 0, retryTimer: null, pollTimer: null, writeChar: null, pressed: false, lastCount: null, writing: false,
+             rx: 0, lastHex: '', writes: 0, writeErr: '', useResponse: false, writeStart: 0 };
   }
   var rings = { L: newRing('L'), R: newRing('R') };
   var game;   // 下面建立
@@ -45,6 +46,10 @@
   function cancelPending(r) { stopPoll(r); try { if (r.device) r.device.gatt.disconnect(); } catch (e) { } }
 
   function onNotify(r, dv) {
+    // 診斷用：收到幾筆、最後一筆內容（顯示在選單上）
+    var hex = [];
+    for (var i = 0; i < Math.min(dv.byteLength, 6); i++) hex.push(('0' + dv.getUint8(i).toString(16)).slice(-2));
+    r.rx++; r.lastHex = hex.join(' ');
     if (dv.byteLength < 2) return;
     var b0 = dv.getUint8(0), b1 = dv.getUint8(1);
     if (b0 === 0x0c) {
@@ -60,15 +65,30 @@
     }
   }
 
-  // 每 0.2 秒送一次 0x05；上一次還沒寫完就跳過，避免 iPad 回報「GATT 操作進行中」
+  // 每 0.2 秒送一次 0x05；上一次還沒寫完就跳過，避免 iPad 回報「GATT 操作進行中」。
+  // 先用「寫入不等回應」（電腦上的程式也是這樣），瀏覽器不支援或失敗就改用一般寫入；
+  // 寫入超過 1.5 秒沒結束也當作失敗，避免卡住之後再也不送。
   function startPoll(r) {
-    stopPoll(r);
+    clearInterval(r.pollTimer);   // 只清掉舊的計時器；不能呼叫 stopPoll，它會把剛設定好的寫入通道清掉，結果一次都不會送
     var cmd = new Uint8Array([0x05]);
+    var props = r.writeChar && r.writeChar.properties;
+    if (props && props.writeWithoutResponse === false) r.useResponse = true;
     r.pollTimer = setInterval(function () {
-      if (!r.writeChar || r.writing) return;
-      r.writing = true;
-      var w = r.writeChar.writeValueWithoutResponse ? r.writeChar.writeValueWithoutResponse(cmd) : r.writeChar.writeValue(cmd);
-      w.then(function () { r.writing = false; }, function () { r.writing = false; });
+      var wc = r.writeChar;
+      if (!wc) return;
+      if (r.writing && Date.now() - r.writeStart < 1500) return;
+      var noResp = !r.useResponse && typeof wc.writeValueWithoutResponse === 'function';
+      var fail = function (e) {
+        r.writing = false;
+        r.writeErr = (noResp ? '不等回應寫入失敗：' : '寫入失敗：') + errText(e);
+        if (noResp) r.useResponse = true;   // 改用一般寫入
+      };
+      r.writing = true; r.writeStart = Date.now();
+      try {
+        var w = noResp ? wc.writeValueWithoutResponse(cmd) : wc.writeValue(cmd);
+        if (w && w.then) w.then(function () { r.writing = false; r.writes++; }, fail);
+        else { r.writing = false; r.writes++; }
+      } catch (e) { fail(e); }
     }, 200);
   }
 
@@ -89,7 +109,7 @@
       .then(function () { current(); return withTimeout(svc.getCharacteristic(WRITE_CHAR), 6000, '讀取指令通道'); })
       .then(function (wc) {
         current();
-        r.writeChar = wc; r.pressed = false; r.lastCount = null;
+        r.writeChar = wc; r.pressed = false; r.lastCount = null; r.rx = 0; r.writes = 0; r.writeErr = ''; r.lastHex = '';
         startPoll(r);
         r.busy = false; r.connected = true; r.status = '已連線';
         saveRingIds();
