@@ -8,7 +8,7 @@
 (function (root) {
   'use strict';
 
-  var VERSION = '2026.10.23-4';   // 每次發佈都改，畫面右下角會顯示
+  var VERSION = '2026.10.23-5';   // 每次發佈都改，畫面右下角會顯示
   var W = 960, H = 720, H_MIN = 540, H_MAX = 760;
   var FONT = '"PingFang TC", "Heiti TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif';
   var TEXT = [240, 238, 245], DIM = [160, 165, 180], GOLD = [255, 205, 70], GREEN = [96, 220, 150], RED = [255, 90, 90], CYAN = [110, 220, 255];
@@ -163,6 +163,8 @@
     this.musicOn = saved.music !== false;
     this.lastPress = { L: -9, R: -9 };
     this.flash = { L: 0, R: 0 };
+    this.menuFlash = { L: 0, R: 0 };   // 選單上握一下：連線框亮起約 1 秒
+    this.gripCount = { L: 0, R: 0 };
     this.particles = [];
     this.newGame();
   }
@@ -245,6 +247,13 @@
       this.supers--; this.superQueued = true; this.sfx.play('super');
       return;
     }
+    if (this.state === 'menu') {   // 選單：握一下只讓連線框亮起（測試用），兩手一起握才開始
+      this.gripCount[side]++;
+      this.menuFlash[side] = 1;
+      this.sfx.play('tap');
+      if (both) this.advance();
+      return;
+    }
     this.advance();   // 其他畫面：握一下＝下一步
   };
   Game.prototype.pressBoth = function () { this.press('L'); this.press('R'); };
@@ -290,6 +299,8 @@
     this.stateT = (this.stateT || 0) + dt;
     this.flash.L = Math.max(0, this.flash.L - dt * 3);
     this.flash.R = Math.max(0, this.flash.R - dt * 3);
+    this.menuFlash.L = Math.max(0, this.menuFlash.L - dt);
+    this.menuFlash.R = Math.max(0, this.menuFlash.R - dt);
     if (this.dive) this.dive.t += dt;
     if (this.superActive) this.superT += dt;
     var s = this.state;
@@ -702,12 +713,25 @@
     var y = H * 0.16 + 130, sides = [['L', '左手', W / 2 - 290], ['R', '右手', W / 2 + 10]];
     for (var i = 0; i < 2; i++) {
       var s = sides[i], r = rings[s[0]] || {};
-      roundRect(ctx, s[2], y, 280, 150, 16); ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fill();
+      var mf = this.menuFlash[s[0]];
+      if (mf > 0) {   // 握到了：金色外框、底色變亮、稍微放大
+        var k = 1 + 0.05 * mf;
+        ctx.save();
+        ctx.translate(s[2] + 140, y + 75); ctx.scale(k, k); ctx.translate(-(s[2] + 140), -(y + 75));
+        roundRect(ctx, s[2], y, 280, 150, 16);
+        ctx.fillStyle = 'rgba(255,205,70,' + (0.15 + 0.3 * mf).toFixed(3) + ')'; ctx.fill();
+        ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(255,215,90,' + Math.min(1, 0.4 + mf).toFixed(3) + ')';
+        ctx.shadowColor = 'rgba(255,205,70,0.9)'; ctx.shadowBlur = 24 * mf; ctx.stroke();
+        ctx.restore();
+      } else {
+        roundRect(ctx, s[2], y, 280, 150, 16); ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fill();
+      }
       this.text(ctx, s[1] + '握力環', 24, TEXT, s[2] + 140, y + 30);
       ellipse(ctx, s[2] + 26, y + 30, 8, 8, rgb(r.connected ? (this.flash[s[0]] > 0 ? GOLD : GREEN) : DIM));
       // 已連線時顯示診斷：送出幾次查詢、收到幾筆資料、最後一筆內容、寫入錯誤
       var diag = r.connected ? ('送出 ' + (r.writes || 0) + '　收到 ' + (r.rx || 0) + (r.lastHex ? '（最後 ' + r.lastHex + '）' : '') + (r.writeErr ? '　' + r.writeErr : '')) : '';
-      this.wrapText(ctx, r.connected ? '已連線（握一下試試看）' : (r.status || '尚未連線'), 13, r.connected ? GREEN : [230, 200, 140], s[2] + 140, y + 52, 256);
+      if (mf > 0) this.text(ctx, '握到了！第 ' + this.gripCount[s[0]] + ' 次', 20, GOLD, s[2] + 140, y + 54);
+      else this.wrapText(ctx, r.connected ? '已連線（握一下試試看）' : (r.status || '尚未連線'), 13, r.connected ? GREEN : [230, 200, 140], s[2] + 140, y + 52, 256);
       if (diag) this.wrapText(ctx, diag, 11, DIM, s[2] + 140, y + 74, 256);
       (function (side) {
         self.button(ctx, r.connected ? '重新連接' : '連接' + (side === 'L' ? '左手' : '右手'), s[2] + 40, y + 88, 200, 46, function () { env.connectRing(side); });
@@ -715,7 +739,7 @@
     }
     if (!env.bluetoothSupported) this.text(ctx, '這個瀏覽器不支援藍牙：iPad 請用 Bluefy 開啟。沒有握力環也能用觸控玩（點左半邊／右半邊）', 15, RED, W / 2, y + 172, { weight: 'normal' });
     this.button(ctx, '開始遊戲', W / 2 - 130, y + 196, 260, 64, function () { self.newGame(); self.startLevel(); }, { fill: 'rgba(255,205,70,0.9)', color: [40, 30, 0], size: 26, stroke: 'rgba(255,230,150,1)' });
-    this.text(ctx, '兩支都連好後，握一下也能開始', 15, DIM, W / 2, y + 282, { weight: 'normal' });
+    this.text(ctx, '兩支都連好後，兩手一起握也能開始', 15, DIM, W / 2, y + 282, { weight: 'normal' });
     this.text(ctx, '最高分 ' + this.best + (this.bestLevel ? '　最遠第 ' + this.bestLevel + ' 關' : ''), 18, GOLD, W / 2, y + 318);
     this.button(ctx, this.musicOn ? '音樂：開' : '音樂：關', W - 150, 16, 130, 40, function () { self.toggleMusic(); }, { size: 16 });
     this.text(ctx, '沒有握力環：點左半邊／右半邊撲球，兩邊同時點＝重影　電腦：← → 撲球、↑ 重影', 14, DIM, W / 2, H - 40, { weight: 'normal' });
