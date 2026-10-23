@@ -151,9 +151,10 @@
     var id = ++r.attempt;
     r.busy = false; r.connected = false;
     cancelPending(r);
-    // 平常只列握力環（名稱 FUNFIT… 或有 FFF0 服務）；上次沒選到時改列全部裝置，以防清單是空的
+    // 平常只列名稱 FUNFIT… 的握力環。不能用服務篩選：握力環廣播裡沒有宣告 FFF0，iOS 會一支都找不到。
+    // 上次沒選到時改列全部裝置，以防清單是空的
     var opts = showAll ? { acceptAllDevices: true, optionalServices: [SERVICE] }
-      : { filters: [{ namePrefix: 'FUNFIT' }, { services: [SERVICE] }], optionalServices: [SERVICE] };
+      : { filters: [{ namePrefix: 'FUNFIT' }], optionalServices: [SERVICE] };
     r.status = '請在清單選擇要當' + (side === 'L' ? '左手' : '右手') + '的 FUNFITGRIP';
     navigator.bluetooth.requestDevice(opts)
       .then(function (dev) {

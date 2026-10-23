@@ -8,7 +8,7 @@
 (function (root) {
   'use strict';
 
-  var VERSION = '2026.10.23-6';   // 每次發佈都改，畫面右下角會顯示
+  var VERSION = '2026.10.23-7';   // 每次發佈都改，畫面右下角會顯示
   var W = 960, H = 720, H_MIN = 540, H_MAX = 760;
   var FONT = '"PingFang TC", "Heiti TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif';
   var TEXT = [240, 238, 245], DIM = [160, 165, 180], GOLD = [255, 205, 70], GREEN = [96, 220, 150], RED = [255, 90, 90], CYAN = [110, 220, 255];
