@@ -8,7 +8,7 @@
 (function (root) {
   'use strict';
 
-  var VERSION = '2026.10.23-1';   // 每次發佈都改，畫面右下角會顯示
+  var VERSION = '2026.10.23-2';   // 每次發佈都改，畫面右下角會顯示
   var W = 960, H = 720, H_MIN = 540, H_MAX = 760;
   var FONT = '"PingFang TC", "Heiti TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif';
   var TEXT = [240, 238, 245], DIM = [160, 165, 180], GOLD = [255, 205, 70], GREEN = [96, 220, 150], RED = [255, 90, 90], CYAN = [110, 220, 255];
@@ -377,6 +377,16 @@
     ctx.fillStyle = rgb(color, o.alpha);
     ctx.fillText(s, x, y);
   };
+  // 超過寬度就換行（最多兩行），狀態訊息比較長時用
+  Game.prototype.wrapText = function (ctx, s, size, color, x, y, maxW) {
+    ctx.font = 'normal ' + size + 'px ' + FONT;
+    var lines = [''], i;
+    for (i = 0; i < s.length; i++) {
+      var tryLine = lines[lines.length - 1] + s.charAt(i);
+      if (ctx.measureText(tryLine).width > maxW && lines.length < 2) lines.push(s.charAt(i)); else lines[lines.length - 1] = tryLine;
+    }
+    for (i = 0; i < lines.length; i++) this.text(ctx, lines[i], size, color, x, y + (i - (lines.length - 1) / 2) * (size + 4), { weight: 'normal' });
+  };
   Game.prototype.button = function (ctx, label, x, y, w, h, fn, o) {
     o = o || {};
     roundRect(ctx, x, y, w, h, 12);
@@ -695,7 +705,7 @@
       roundRect(ctx, s[2], y, 280, 150, 16); ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fill();
       this.text(ctx, s[1] + '握力環', 24, TEXT, s[2] + 140, y + 30);
       ellipse(ctx, s[2] + 26, y + 30, 8, 8, rgb(r.connected ? (this.flash[s[0]] > 0 ? GOLD : GREEN) : DIM));
-      this.text(ctx, r.connected ? '已連線（握一下試試看）' : (r.status || '尚未連線'), 14, r.connected ? GREEN : DIM, s[2] + 140, y + 66, { weight: 'normal' });
+      this.wrapText(ctx, r.connected ? '已連線（握一下試試看）' : (r.status || '尚未連線'), 13, r.connected ? GREEN : [230, 200, 140], s[2] + 140, y + 60, 256);
       (function (side) {
         self.button(ctx, r.connected ? '重新連接' : '連接' + (side === 'L' ? '左手' : '右手'), s[2] + 40, y + 88, 200, 46, function () { env.connectRing(side); });
       })(s[0]);
