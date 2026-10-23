@@ -8,22 +8,74 @@
 (function (root) {
   'use strict';
 
-  var VERSION = '2026.10.23-8';   // 每次發佈都改，畫面右下角會顯示
+  var VERSION = '2026.10.23-9';   // 每次發佈都改，畫面右下角會顯示
   var W = 960, H = 720, H_MIN = 540, H_MAX = 760;
   var FONT = '"PingFang TC", "Heiti TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif';
   var TEXT = [240, 238, 245], DIM = [160, 165, 180], GOLD = [255, 205, 70], GREEN = [96, 220, 150], RED = [255, 90, 90], CYAN = [110, 220, 255];
 
-  var NUM_LEVELS = 10, SHOTS_PER_LEVEL = 10, HEARTS = 3, STREAK_FOR_SUPER = 10, MAX_SUPER = 3;
+  var NUM_LEVELS = 10, SHOTS_PER_LEVEL = 5, HEARTS = 3, STREAK_FOR_SUPER = 10, MAX_SUPER = 3;
   var BOTH_WINDOW = 0.25;   // 兩手在這個秒數內先後握下＝一起握
-  var RUNUP = 1.0, RESULT_TIME = 1.1, DIVE_TIME = 0.28;
+  var RUNUP = 1.0, RESULT_TIME = 1.1;
+  // 撲救（長度都是 k=1 時的像素）：握下時往那一邊撲向球真正會到的位置，
+  // 撲到位要 DIVE_BASE + 移動距離 / DIVE_SPEED 秒。球到的那一刻碰到身體才算擋下，所以太晚撲也擋不到
+  var DIVE_BASE = 0.2, DIVE_SPEED = 450;
+  var GOAL_HALF = 310, BALL_R = 10;   // 球門半寬、球到球門時的半徑
+  var CURVE_PULL = 110;   // 變化球一開始往假方向拉的距離
 
   // 第 L 關（1～10）的參數
   function levelParams(L) {
     return {
-      flight: 1.5 - (L - 1) * 0.09,                       // 球從罰球點飛到球門的秒數：1.5 → 0.69
+      flight: 1.6 - (L - 1) * 0.07,                       // 球從罰球點飛到球門的秒數：1.6 → 0.97
       double: L >= 3 ? Math.min(0.35, 0.15 + (L - 3) * 0.03) : 0,  // 雙球機率（只在手上有大招時）
       curve: L >= 6 ? Math.min(0.6, 0.25 + (L - 6) * 0.09) : 0     // 變化球機率
     };
+  }
+
+  // 守門員姿勢：x、y 是腳底相對站位的位移，ang 是身體傾斜角度，prog 是撲出程度（0～1）
+  function keeperPose(dive) {
+    if (!dive) return { x: 0, y: 0, ang: 0, prog: 0 };
+    var u = easeOutCubic(clamp(dive.t / dive.T));
+    return { x: dive.ox * u, y: dive.oy * u, ang: dive.ang * u, prog: u };
+  }
+  // 規劃撲救：找一個身體確實碰得到點 (px, py) 的姿勢，挑移動最少的。side＝往哪邊撲
+  function planDive(side, px, py) {
+    var best = null, bestCost = 1e9;
+    for (var a = 0.1; a <= 1.55; a += 0.05) {
+      for (var ox = -20; ox <= 260; ox += 10) {
+        for (var oy = 0; oy >= -200; oy -= 10) {
+          var cost = Math.sqrt(ox * ox + oy * oy) + 40 * a;
+          if (cost >= bestCost) continue;
+          var pose = { x: side * ox, y: oy, ang: side * a, prog: 1 };
+          if (bodyHit(pose, px, py, 0)) { best = pose; bestCost = cost; }   // 球心要落在身上，不是擦邊
+        }
+      }
+    }
+    if (!best) best = { x: side * 120, y: -60, ang: side * 1.2, prog: 1 };
+    var dist = Math.sqrt(best.x * best.x + best.y * best.y);
+    return { side: side, t: 0, ox: best.x, oy: best.y, ang: best.ang, T: DIVE_BASE + dist / DIVE_SPEED };
+  }
+  // 身體各部位（以腳底為原點、還沒旋轉時）：膠囊 [x0, y0, x1, y1, 半徑]、圓 [x, y, 半徑]。畫圖和判定共用
+  function bodyParts(prog) {
+    var spread = 18 + 20 * prog, ax = 46, ay = -112 - 46 * lerp(0.35, 1.1, prog);
+    return {
+      caps: [[-10, -62, -spread, 0, 7.5], [10, -62, spread, 0, 7.5], [0, -100, 0, -76, 27], [-22, -112, -ax, ay, 6.5], [22, -112, ax, ay, 6.5]],
+      circles: [[-ax, ay, 13], [ax, ay, 13], [0, -138, 18]]
+    };
+  }
+  function segDist(px, py, x0, y0, x1, y1) {
+    var dx = x1 - x0, dy = y1 - y0, l = dx * dx + dy * dy;
+    var u = l ? clamp(((px - x0) * dx + (py - y0) * dy) / l) : 0;
+    var ex = px - (x0 + dx * u), ey = py - (y0 + dy * u);
+    return Math.sqrt(ex * ex + ey * ey);
+  }
+  // 球（中心 px, py：相對守門員站位的腳底，k=1 像素）有沒有碰到身體
+  function bodyHit(pose, px, py, br) {
+    var dx = px - pose.x, dy = py - pose.y, c = Math.cos(pose.ang), s = Math.sin(pose.ang);
+    var lx = dx * c + dy * s, ly = -dx * s + dy * c;   // 轉到身體自己的座標
+    var b = bodyParts(pose.prog), i, q;
+    for (i = 0; i < b.caps.length; i++) { q = b.caps[i]; if (segDist(lx, ly, q[0], q[1], q[2], q[3]) <= q[4] + br) return true; }
+    for (i = 0; i < b.circles.length; i++) { q = b.circles[i]; if (segDist(lx, ly, q[0], q[1], q[0], q[1]) <= q[2] + br) return true; }
+    return false;
   }
 
   // ---------- 小工具 ----------
@@ -207,7 +259,9 @@
     var self = this;
     sides.forEach(function (side) {
       var curve = !dbl && r() < p.curve;
-      self.balls.push({ side: side, fake: curve ? -side : side, curve: curve, targetY: lerp(0.25, 0.8, r()), spin: (r() - 0.5) * 30, done: false });
+      // 落點：離中間 dist（靠中間的球站著就擋得到），高度 targetY；變化球和雙球都往角落踢
+      var dist = curve || dbl ? lerp(150, 285, r()) : lerp(0, 285, r());
+      self.balls.push({ side: side, fake: curve ? -side : side, curve: curve, dist: dist, targetY: lerp(0.1, 1, r()), spin: (r() - 0.5) * 30, done: false });
     });
     this.flight = p.flight;
     this.go('runup');
@@ -238,7 +292,7 @@
     if (this.state === 'runup' || this.state === 'flight') {
       if (both && this.supers > 0 && !this.superActive) return this.useSuper();
       if (!this.dive) {
-        this.dive = { side: side === 'L' ? -1 : 1, t: 0 };
+        this.dive = this.aimDive(side === 'L' ? -1 : 1);
         this.sfx.play('dive');
       }
       return;
@@ -255,6 +309,12 @@
       return;
     }
     this.advance();   // 其他畫面：握一下＝下一步
+  };
+  // 往 sideNum（-1 左、1 右）撲：那一邊有球就撲向球真正會到的位置，沒有就撲向那一邊的中間
+  Game.prototype.aimDive = function (sideNum) {
+    var p = { x: sideNum * 180, y: -100 };
+    this.balls.forEach(function (b) { if (b.side === sideNum) p = ballRel(b); });
+    return planDive(sideNum, p.x, p.y);
   };
   Game.prototype.pressBoth = function () { this.press('L'); this.press('R'); };
   Game.prototype.useSuper = function () {
@@ -301,7 +361,8 @@
     this.flash.R = Math.max(0, this.flash.R - dt * 3);
     this.menuFlash.L = Math.max(0, this.menuFlash.L - dt);
     this.menuFlash.R = Math.max(0, this.menuFlash.R - dt);
-    if (this.dive) this.dive.t += dt;
+    // 撲救動作只在球飛行中前進：球到的那一刻姿勢就定住，畫面和判定一致
+    if (this.dive && (this.state === 'runup' || this.state === 'flight')) this.dive.t += dt;
     if (this.superActive) this.superT += dt;
     var s = this.state;
     if (s === 'intro' && this.stateT > 2.2) this.nextShot();
@@ -325,11 +386,16 @@
     var saved = 0, conceded = 0, self = this;
     this.balls.forEach(function (b) {
       b.done = true;
-      b.saved = self.superActive || (self.dive && self.dive.side === b.side);
+      var p = ballRel(b);
+      b.saved = self.superActive || bodyHit(keeperPose(self.dive), p.x, p.y, BALL_R);
       if (b.saved) saved++; else conceded++;
       self.totalShots++;
     });
     this.result = { saved: saved, conceded: conceded, superUsed: this.superActive };
+    if (conceded && this.balls.length === 1) {   // 為什麼沒擋到：沒撲、撲錯邊、或撲對邊但還沒撲到位（太晚）
+      var d = this.dive, b0 = this.balls[0];
+      this.result.why = !d ? 'none' : d.side !== b0.side ? 'wrong' : 'late';
+    }
     if (conceded) {
       this.hearts--;
       this.streak = 0;
@@ -365,15 +431,20 @@
   Game.prototype.geom = function () {
     var k = H / 720;
     var top = Math.round(H * 0.17), bottom = Math.round(H * 0.17 + 250 * k);
-    return { k: k, gx0: 170, gx1: 790, gTop: top, gBot: bottom, spotY: Math.round(H - 105 * k), cx: W / 2 };
+    // 球門寬也跟著 k 縮放，球門、守門員、球才會維持同樣比例（碰撞判定在 k=1 的座標算）
+    return { k: k, gx0: Math.round(W / 2 - GOAL_HALF * k), gx1: Math.round(W / 2 + GOAL_HALF * k), gTop: top, gBot: bottom,
+             footY: bottom - 4 * k, spotY: Math.round(H - 105 * k), cx: W / 2 };
   };
+  // 球到球門的位置（相對守門員站位腳底、k=1 像素）：左右 side×dist，高度 targetY（0＝橫樑下、1＝地面）
+  function ballRel(b) { return { x: b.side * b.dist, y: lerp(-216, -14, b.targetY) }; }
   Game.prototype.ballTarget = function (b, g) {
-    return { x: g.cx + b.side * 200, y: lerp(g.gTop + 30 * g.k, g.gBot - 18 * g.k, b.targetY) };
+    var p = ballRel(b);
+    return { x: g.cx + p.x * g.k, y: g.footY + p.y * g.k };
   };
   // 球在飛行中的位置與大小：二次貝茲曲線；變化球的控制點偏到另一邊，看起來先往假的方向再轉回來
   Game.prototype.ballPos = function (b, t, g) {
     var p0 = { x: g.cx, y: g.spotY }, p1 = this.ballTarget(b, g);
-    var c = b.curve ? { x: g.cx + b.fake * 330, y: lerp(p0.y, p1.y, 0.55) } : { x: lerp(p0.x, p1.x, 0.5), y: lerp(p0.y, p1.y, 0.5) - 60 * g.k };
+    var c = b.curve ? { x: g.cx + b.fake * CURVE_PULL * g.k, y: lerp(p0.y, p1.y, 0.55) } : { x: lerp(p0.x, p1.x, 0.5), y: lerp(p0.y, p1.y, 0.5) - 60 * g.k };
     var p = bezier(p0, c, p1, t);
     return { x: p.x, y: p.y - Math.sin(Math.PI * t) * 30 * g.k, r: lerp(24, 10, easeOutCubic(t)) * g.k };
   };
@@ -496,29 +567,29 @@
     ctx.fillRect(g.gx0 - 9, g.gTop - 9, g.gx1 - g.gx0 + 18, 9);
   };
 
-  // 守門員：站中間；撲出時往左右飛出去。重影時左右各出現一個半透明分身
+  // 守門員：站中間；撲出時飛向球。重影時左右各出現一個半透明分身，各自撲向那一邊
   Game.prototype.drawKeeper = function (ctx, g) {
-    var d = this.dive, side = 0, prog = 0;
-    if (d) { side = d.side; prog = easeOutCubic(clamp(d.t / DIVE_TIME)); }
-    if (this.state === 'result' && this.stateT > RESULT_TIME * 0.75) prog *= 1 - (this.stateT - RESULT_TIME * 0.75) / (RESULT_TIME * 0.25);
-    if (this.superActive) {
-      var a = 0.45 + 0.15 * Math.sin(this.t * 14), sp = easeOutCubic(clamp(this.superT / 0.2));
-      this.drawKeeperBody(ctx, g, -1, sp, a, true);
-      this.drawKeeperBody(ctx, g, 1, sp, a, true);
+    var pose = keeperPose(this.dive);
+    if (this.state === 'result' && this.stateT > RESULT_TIME * 0.75) {   // 結果畫面最後回到中間
+      var f = 1 - (this.stateT - RESULT_TIME * 0.75) / (RESULT_TIME * 0.25);
+      pose = { x: pose.x * f, y: pose.y * f, ang: pose.ang * f, prog: pose.prog * f };
     }
-    this.drawKeeperBody(ctx, g, side, prog, 1, false);
+    if (this.superActive) {
+      if (!this.ghosts || this.ghosts.shot !== this.shot) this.ghosts = { shot: this.shot, dives: [this.aimDive(-1), this.aimDive(1)] };
+      var a = 0.45 + 0.15 * Math.sin(this.t * 14), self = this;
+      this.ghosts.dives.forEach(function (d) { d.t = self.superT * 2; self.drawKeeperBody(ctx, g, keeperPose(d), a, true); });
+    }
+    this.drawKeeperBody(ctx, g, pose, 1, false);
   };
-  Game.prototype.drawKeeperBody = function (ctx, g, side, prog, alpha, ghost) {
-    var k = g.k, footY = g.gBot - 4;
-    var x = g.cx + side * 190 * prog, y = footY - 40 * k * prog;
-    var ang = side * prog * 1.25;
+  Game.prototype.drawKeeperBody = function (ctx, g, pose, alpha, ghost) {
+    var k = g.k, prog = pose.prog;
+    if (!ghost) ellipse(ctx, g.cx + (pose.x + 70 * Math.sin(pose.ang)) * k, g.footY + 2 * k, 34 * k + 20 * k * Math.abs(Math.sin(pose.ang)), 8 * k, 'rgba(0,0,0,0.25)');   // 地上的影子
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.translate(x, y);
-    ctx.rotate(ang);
+    ctx.translate(g.cx + pose.x * k, g.footY + pose.y * k);
+    ctx.rotate(pose.ang);
     var jersey = ghost ? 'rgb(110,220,255)' : '#f2b705', dark = ghost ? 'rgb(60,150,210)' : '#c78c00', skin = ghost ? 'rgb(170,235,255)' : '#f0c8a0';
     var glove = ghost ? 'rgb(220,250,255)' : '#ffffff';
-    if (!ghost) ellipse(ctx, 0, 2, 34 * k, 8 * k, 'rgba(0,0,0,0.25)');
     // 腿
     ctx.strokeStyle = ghost ? 'rgb(60,150,210)' : '#1f2a44'; ctx.lineCap = 'round'; ctx.lineWidth = 15 * k;
     var spread = 18 + 20 * prog;
@@ -667,8 +738,9 @@
   };
   Game.prototype.drawIntro = function (ctx) {
     var p = levelParams(this.level), lines = ['球飛到球門約 ' + p.flight.toFixed(1) + ' 秒'];
+    if (this.level === 1) lines.push('球要碰到守門員才算擋下：角落的球要早一點撲');
     if (p.double) lines.push('手上有大招時會出現雙球：兩手一起握使出重影');
-    if (this.level === 6) lines.push('★ 新挑戰：變化球！球飛到一半會轉向');
+    if (this.level === 6) lines.push('★ 新挑戰：變化球！拖著黃色尾巴的球會轉向另一邊');
     else if (p.curve) lines.push('變化球變多了');
     var b = this.panel(ctx, 520, 150 + lines.length * 30);
     this.text(ctx, '第 ' + this.level + ' 關', 44, GOLD, W / 2, b.y + 52);
@@ -679,7 +751,9 @@
     var r = this.result; if (!r) return;
     var a = clamp(this.stateT * 4), y = g.gTop + (g.gBot - g.gTop) / 2;
     var label = r.conceded ? (r.saved ? '擋下一球！被踢進一球' : '進球…') : (r.superUsed && r.saved > 1 ? '重影全擋！' : '撲到了！');
+    var why = { none: '要撲啊！', wrong: '撲錯邊了', late: '太晚了！要早一點撲' }[r.why];
     this.text(ctx, label, 46, r.conceded ? RED : GREEN, W / 2, y, { alpha: a });
+    if (why) this.text(ctx, why, 24, TEXT, W / 2, y + 48, { alpha: a });
     if (r.charged) this.text(ctx, '連續 ' + this.streak + ' 球！存了一次大招', 22, CYAN, W / 2, y + 48, { alpha: a });
   };
   Game.prototype.drawEnd = function (ctx) {
@@ -707,8 +781,8 @@
     var self = this, env = this.env, rings = env.rings || {};
     ctx.fillStyle = 'rgba(5,10,25,0.55)'; ctx.fillRect(0, 0, W, H);
     this.text(ctx, '守門員大作戰', 58, GOLD, W / 2, H * 0.16);
-    this.text(ctx, '握右手往右撲、握左手往左撲；連續撲到 10 球存大招，兩手一起握使出「重影」', 17, TEXT, W / 2, H * 0.16 + 56, { weight: 'normal' });
-    this.text(ctx, '共 10 關：球越來越快，第 3 關起有雙球，第 6 關起有變化球', 17, DIM, W / 2, H * 0.16 + 84, { weight: 'normal' });
+    this.text(ctx, '握右手往右撲、握左手往左撲；球要碰到守門員才算擋下，太晚撲會來不及', 17, TEXT, W / 2, H * 0.16 + 56, { weight: 'normal' });
+    this.text(ctx, '共 10 關、每關 5 球，越來越快，第 6 關起有變化球；連續撲到 10 球存大招，兩手一起握使出「重影」', 17, DIM, W / 2, H * 0.16 + 84, { weight: 'normal' });
     // 連接左右手
     var y = H * 0.16 + 130, sides = [['L', '左手', W / 2 - 290], ['R', '右手', W / 2 + 10]];
     for (var i = 0; i < 2; i++) {
@@ -751,7 +825,8 @@
 
   function setHeight(h) { H = Math.round(clamp(h, H_MIN, H_MAX)); api.H = H; return H; }   // 由 app.js 依螢幕比例設定
   var api = { VERSION: VERSION, Game: Game, W: W, H: H, setHeight: setHeight, levelParams: levelParams,
-              NUM_LEVELS: NUM_LEVELS, SHOTS_PER_LEVEL: SHOTS_PER_LEVEL, HEARTS: HEARTS, STREAK_FOR_SUPER: STREAK_FOR_SUPER };
+              NUM_LEVELS: NUM_LEVELS, SHOTS_PER_LEVEL: SHOTS_PER_LEVEL, HEARTS: HEARTS, STREAK_FOR_SUPER: STREAK_FOR_SUPER,
+              keeperPose: keeperPose, bodyHit: bodyHit, ballRel: ballRel, BALL_R: BALL_R, planDive: planDive };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.KeeperGame = api;
 })(typeof window !== 'undefined' ? window : this);
